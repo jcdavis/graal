@@ -32,6 +32,7 @@ import static jdk.vm.ci.code.ValueUtil.asRegister;
 import static jdk.vm.ci.code.ValueUtil.isRegister;
 import static jdk.vm.ci.code.ValueUtil.isStackSlot;
 
+import jdk.vm.ci.code.Register;
 import org.graalvm.compiler.core.common.NumUtil;
 import org.graalvm.compiler.asm.amd64.AMD64Address;
 import org.graalvm.compiler.asm.amd64.AMD64Assembler.AMD64BinaryArithmetic;
@@ -218,12 +219,13 @@ public class AMD64Binary {
         @Def({REG, HINT}) protected AllocatableValue result;
         @Use({REG}) protected AllocatableValue x;
         private final int y;
+        private final boolean setFlags;
 
-        public ConstOp(AMD64BinaryArithmetic opcode, OperandSize size, AllocatableValue result, AllocatableValue x, int y) {
-            this(opcode.getMIOpcode(size, NumUtil.isByte(y)), size, result, x, y);
+        public ConstOp(AMD64BinaryArithmetic opcode, OperandSize size, AllocatableValue result, AllocatableValue x, int y, boolean setFlags) {
+            this(opcode.getMIOpcode(size, NumUtil.isByte(y)), size, result, x, y, setFlags);
         }
 
-        public ConstOp(AMD64MIOp opcode, OperandSize size, AllocatableValue result, AllocatableValue x, int y) {
+        public ConstOp(AMD64MIOp opcode, OperandSize size, AllocatableValue result, AllocatableValue x, int y, boolean setFlags) {
             super(TYPE);
             this.opcode = opcode;
             this.size = size;
@@ -231,10 +233,25 @@ public class AMD64Binary {
             this.result = result;
             this.x = x;
             this.y = y;
+            this.setFlags = setFlags;
         }
 
         @Override
         public void emitCode(CompilationResultBuilder crb, AMD64MacroAssembler masm) {
+            if (!setFlags && isRegister(result) && isRegister(x) && !result.equals(x)) {
+                if (opcode.toString().equals("ADD")) {
+                    masm.leaq(asRegister(result), new AMD64Address(asRegister(x), y));
+                    return;
+                }
+                if (opcode.toString().equals("SUB")) {
+                    masm.leaq(asRegister(result), new AMD64Address(asRegister(x), -y));
+                    return;
+                }
+                if (opcode.toString().equals("SHL") && y >= 1 && y <= 3) {
+                    masm.leaq(asRegister(result), new AMD64Address(Register.None, asRegister(x), AMD64Address.Scale.fromShift(y)));
+                    return;
+                }
+            }
             AMD64Move.move(crb, masm, result, x);
             opcode.emit(masm, size, asRegister(result), y);
         }
